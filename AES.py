@@ -23,6 +23,7 @@ class AES():
     def decrypt(self):
         print()
 
+    @staticmethod
     def determineRounds(keyLength):
         if(keyLength == 128):
             rounds = 10
@@ -32,9 +33,11 @@ class AES():
             sys.exit('Unsupported key length.')
         return rounds
 
+    @staticmethod
     def formatByte(byte):
         return "0x%02X " % byte
 
+    @staticmethod
     def generateKeyfile(filename, keyLength):
         with open(filename, 'wb') as f:
             if(keyLength == 128):
@@ -195,6 +198,7 @@ class AES():
             result = AES.Key.concatRowDelimiter(result, '=')
             return result
 
+        @staticmethod
         def concatRowDelimiter(str, char):
             numCols = (AES.Block.NUM_COLS * 4) + AES.Block.NUM_COLS - 1
             for c in range(numCols):
