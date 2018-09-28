@@ -1,0 +1,4 @@
+.vscode/
+key_test.key
+cypher_test.aes
+plain_test.txt
