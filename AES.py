@@ -21,6 +21,8 @@ class AES():
              0xe1, 0xf8, 0x98, 0x11, 0x69, 0xd9, 0x8e, 0x94, 0x9b, 0x1e, 0x87, 0xe9, 0xce, 0x55, 0x28, 0xdf,
              0x8c, 0xa1, 0x89, 0x0d, 0xbf, 0xe6, 0x42, 0x68, 0x41, 0x99, 0x2d, 0x0f, 0xb0, 0x54, 0xbb, 0x16]
 
+    R_CON = [0x00, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36]
+
     def __init__(self, plaintextFile, cyphertextFile,
                  keyFile, keyLength):
         self.plaintextFile = plaintextFile
@@ -55,7 +57,17 @@ class AES():
         return "0x%02X " % byte
 
     @staticmethod
-    def generateKeyfile(filename, keyLength):
+    def substituteByte(byte):
+        return AES.S_BOX[byte]
+
+    def substituteWord(word):
+        for i in range(AES.Block.NUM_ROWS):
+            byte = word.data[i]
+            word.data[i] = AES.substituteByte(byte)
+        return word
+
+    @staticmethod
+    def generateKeyfile(filename, values, keyLength):
         with open(filename, 'wb') as f:
             if(keyLength == 128):
                 numBytes = 16
@@ -63,9 +75,18 @@ class AES():
                 numBytes = 32
             else:
                 sys.exit('Unsupported keylength.')
-            for i in range(numBytes):
-                key = os.urandom(1)
-                f.write(key)
+            if(values is not None):
+                index = 0
+                while index < len(values):
+                    val1 = values[index] << 8
+                    val2 = values[index + 1]
+                    key = (val1 + val2).to_bytes(2, byteorder='big')
+                    f.write(key)
+                    index += 2
+            else:
+                for i in range(numBytes):
+                    key = os.urandom(1)
+                    f.write(key)
         return filename
 
     class Block():
@@ -188,17 +209,37 @@ class AES():
     class Key():
 
         def __init__(self, keyFile, keyLength):
-            self.rounds = AES.determineRounds(keyLength)
+            self.numRounds = AES.determineRounds(keyLength)
             self.keyLength = keyLength
-            self.roundKeys = []
+            self.rounds = []
+            mult = 1
             with open(keyFile, 'rb') as f:
-                self.roundKeys.append(AES.Block(f))
+                self.rounds.append(AES.Block(f))
                 if(keyLength == 256):
-                    self.roundKeys.append(AES.Block(f))
-                for r in range(self.rounds):
-                    self.roundKeys.append(AES.Block(None))
-                    if(keyLength == 256):
-                        self.roundKeys.append(AES.Block(None))
+                    self.rounds.append(AES.Block(f))
+                    mult = 2
+            previousWord = self.rounds[len(self.rounds) - 1].getColumn(
+                AES.Block.NUM_COLS - 1)
+            wordNum = len(self.rounds) * AES.Block.NUM_COLS
+            nk = wordNum
+            for roundIndex in range(len(self.rounds), self.numRounds + 1):
+                self.rounds.append(AES.Block(None))
+                for columnIndex in range(AES.Block.NUM_COLS):
+                    currentWord = previousWord
+                    if(wordNum % nk == 0):
+                        currentWord.rotate(1)
+                    if(wordNum % AES.Block.NUM_COLS == 0):
+                        AES.substituteWord(currentWord)
+                    if(wordNum % nk == 0):
+                        rconVal = AES.R_CON[int(wordNum/nk)]
+                        currentWord.data[0] = currentWord.data[0] ^ rconVal
+                    trailingWord = self.rounds[roundIndex - mult].getColumn(
+                        columnIndex)
+                    for i in range(AES.Block.NUM_ROWS):
+                        currentWord.data[i] = currentWord.data[i] ^ trailingWord.data[i]
+                    self.rounds[roundIndex].setColumn(columnIndex, currentWord)
+                    previousWord = currentWord
+                    wordNum += 1
 
         def __str__(self):
             result = ''
@@ -207,8 +248,8 @@ class AES():
             result += '[BEGIN KEY]\n'
             result = AES.Key.concatRowDelimiter(result, '=')
             result = AES.Key.concatRowDelimiter(result, '-')
-            for block in self.roundKeys:
-                result += str(block)
+            for keyRound in self.rounds:
+                result += str(keyRound)
                 result = AES.Key.concatRowDelimiter(result, '-')
             result = AES.Key.concatRowDelimiter(result, '=')
             result += '[END KEY]\n'
@@ -228,11 +269,27 @@ class AES():
 
 
 def main():
-    keyFile = AES.generateKeyfile('key_test.key', 128)
-    key = AES.Key(keyFile, 128)
-    print(key)
-    instance = AES('plain_test.txt', 'cypher_test.aes', keyFile, 128)
+    values_128 = [0x2b, 0x7e, 0x15, 0x16,
+                  0x28, 0xae, 0xd2, 0xa6,
+                  0xab, 0xf7, 0x15, 0x88,
+                  0x09, 0xcf, 0x4f, 0x3c]
+
+    values_256 = [0x00, 0x00, 0x00, 0x00,
+                  0x00, 0x00, 0x00, 0x00,
+                  0x00, 0x00, 0x00, 0x00,
+                  0x00, 0x00, 0x00, 0x00,
+                  0x00, 0x00, 0x00, 0x00,
+                  0x00, 0x00, 0x00, 0x00,
+                  0x00, 0x00, 0x00, 0x00,
+                  0x00, 0x00, 0x00, 0x01]
+    values = values_128
+    keySize = len(values) * 8
+    keyFile = AES.generateKeyfile('key_test.key', values, keySize)
+    plainFile = 'plain_test.txt'
+    cypherFile = 'cypher_test.aes'
+    instance = AES(plainFile, cypherFile, keyFile, keySize)
     print(instance)
+    print(instance.key)
 
 if __name__ == '__main__':
     main()
