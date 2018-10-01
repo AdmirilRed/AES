@@ -158,19 +158,22 @@ class AES():
                     self.threadSemaphore.release()
 
     def writeBlocks(self, filename):
-        blockSize = AES.Block.NUM_COLS * AES.Block.NUM_ROWS
+        bytesWritten = 0
         with open(filename, 'wb') as f:
             while self.doneQueueing == 0 or len(self.threadQueue) != 0:
                 self.threadSemaphore.acquire()
                 thread = self.threadQueue.pop(0)
-                block = thread.result()
-                block.resetPointer()
-                index = 0
-                for i in range(int(blockSize/2)):
-                    val1 = block.getNext() << 8
-                    val2 = block.getNext()
-                    key = (val1 + val2).to_bytes(2, byteorder='big')
-                    f.write(key)
+                bytestring = thread.result()
+                f.write(bytestring)
+                bytesWritten += len(bytestring)
+                threshold = 1024
+                if(bytesWritten % threshold == 0):
+                    kb = bytesWritten / 1024
+                    if(kb < 1000):
+                        print('Written %s kilibytes.' % kb)
+                    else:
+                        threshold = int(1000000 / 4)
+                        print('Written %s megabytes.' % (kb / 1000))
 
     def encryptBlock(self, block):
         print('Original Block:')
@@ -187,7 +190,12 @@ class AES():
             roundNum += 1
         print('Encrypted Block:')
         print(block)
-        return block
+        blockSize = AES.Block.NUM_COLS * AES.Block.NUM_ROWS
+        total = 0
+        for i in range(blockSize):
+            total += block.getNext() << (8 * i)
+        result = total.to_bytes(blockSize, byteorder='little')
+        return result
 
     def addRoundKey(self, block, roundNum):
         roundKey = self.key.rounds[roundNum]
