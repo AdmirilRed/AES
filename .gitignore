@@ -2,3 +2,10 @@
 key_test.key
 cypher_test.aes
 plain_test.txt
+CIA_Factbook2009.txt
+input
+inputfile
+key
+keyfile
+output
+test.py
