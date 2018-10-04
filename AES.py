@@ -128,6 +128,8 @@ class AES():
               0x37, 0x39, 0x2b, 0x25, 0x0f, 0x01, 0x13, 0x1d, 0x47, 0x49, 0x5b, 0x55, 0x7f, 0x71, 0x63, 0x6d,
               0xd7, 0xd9, 0xcb, 0xc5, 0xef, 0xe1, 0xf3, 0xfd, 0xa7, 0xa9, 0xbb, 0xb5, 0x9f, 0x91, 0x83, 0x8d]
 
+    MEMORY_THRESHOLD = 1000000000
+
     def __init__(self, plaintextFile, cyphertextFile,
                  keyFile, keyLength):
         self.plaintextFile = plaintextFile
@@ -145,46 +147,108 @@ class AES():
         return result
 
     def encrypt(self):  # INCREASE NUMBER OF WORKERS WHEN DONE DEBUGGING!!!!
-        with ThreadPoolExecutor(max_workers=3) as executor:
-            executor.submit(self.writeBlocks, self.cyphertextFile)
+        with ThreadPoolExecutor(max_workers=1) as executor:
             with open(self.plaintextFile, 'rb') as f:
                 f.seek(0, 2)
                 fileSize = f.tell()
                 blockSize = AES.Block.NUM_ROWS * AES.Block.NUM_COLS
                 numBlocks = math.floor(fileSize / blockSize)
                 f.seek(0, 0)
-                for i in range(numBlocks):
-                    block = AES.Block.fromFile(f, 0)
+                if(fileSize > AES.MEMORY_THRESHOLD):
+                    executor.submit(self.writeBlocks, fileSize, self.cyphertextFile)
+                    for i in range(numBlocks):
+                        block = AES.Block.fromFile(f, 0)
+                        thread = executor.submit(self.encryptBlock, block)
+                        self.threadQueue.append(thread)
+                        self.threadSemaphore.release()
+                    block = AES.Block.fromFile(f, 1)
                     thread = executor.submit(self.encryptBlock, block)
                     self.threadQueue.append(thread)
+                    self.doneQueueing = 1
                     self.threadSemaphore.release()
-                block = AES.Block.fromFile(f, 1)
-                thread = executor.submit(self.encryptBlock, block)
-                self.threadQueue.append(thread)
-                self.doneQueueing = 1
-                self.threadSemaphore.release()
+                    return
+                else:
+                    byteArray = bytearray(f.read(fileSize))
+                    arrayIndex = 0
+                    for i in range(numBlocks):
+                        data = []
+                        index = arrayIndex
+                        for r in range(AES.Block.NUM_ROWS):
+                            data.append([])
+                            offset = 0
+                            for c in range(AES.Block.NUM_COLS):
+                                byte = byteArray[index + offset]
+                                data[r].append(byte)
+                                offset += AES.Block.NUM_COLS
+                            index += 1
+                        arrayIndex += blockSize
+                        block = AES.Block(data)
+                        thread = executor.submit(self.encryptBlock, block)
+                        self.threadQueue.append(thread)
+                        self.threadSemaphore.release()
+                    data = []
+                    index = arrayIndex
+                    paddedBytes = fileSize - index
+                    if(paddedBytes == 0):
+                        paddedBytes = blockSize
+                    for r in range(AES.Block.NUM_ROWS):
+                        data.append([])
+                        offset = 0
+                        for c in range(AES.Block.NUM_COLS):
+                            if(index + offset >= fileSize):
+                                byte = paddedBytes
+                            else:
+                                byte = byteArray[index + offset]
+                            data[r].append(byte)
+                            offset += AES.Block.NUM_COLS
+                        index += 1
+                    arrayIndex += blockSize
+                    block = AES.Block(data)
+                    thread = executor.submit(self.encryptBlock, block)
+                    self.threadQueue.append(thread)
+                    self.doneQueueing = 1
+                    self.threadSemaphore.release()
+                    self.writeBlocks(fileSize, self.cyphertextFile)
 
-    def writeBlocks(self, filename):
+
+    def writeBlocks(self, fileSize, filename):
         bytesWritten = 0
+        threshold = 2048
         with open(filename, 'wb') as f:
-            while self.doneQueueing == 0 or len(self.threadQueue) != 0:
-                self.threadSemaphore.acquire()
-                thread = self.threadQueue.pop(0)
-                bytestring = bytearray(thread.result())
-                f.write(bytestring)
-                bytesWritten += len(bytestring)
-                threshold = 1024
+            if(fileSize > AES.MEMORY_THRESHOLD):
+                while self.doneQueueing == 0 or len(self.threadQueue) != 0:
+                    self.threadSemaphore.acquire()
+                    thread = self.threadQueue.pop(0)
+                    bytestring = bytearray(thread.result())
+                    f.write(bytestring)
+                    bytesWritten += len(bytestring)
+                    if(bytesWritten % threshold == 0):
+                        kb = bytesWritten / 1024
+                        if(kb < 1000):
+                            print('Written %s kilobytes.' % kb)
+                        else:
+                            threshold = int(1024000 / 4)
+                            print('Written %s megabytes.' % (kb / 1000))
+            else:
+                output = bytearray()
+                while len(self.threadQueue) > 0:
+                    bytestring = self.threadQueue.pop(0).result()
+                    for i in range(len(bytestring)):
+                        output.append(bytestring[i])
+                f.write(output)
+                bytesWritten += len(output)
                 if(bytesWritten % threshold == 0):
-                    kb = bytesWritten / 1024
-                    if(kb < 1000):
-                        print('Written %s kilobytes.' % kb)
-                    else:
-                        threshold = int(1000000 / 4)
-                        print('Written %s megabytes.' % (kb / 1000))
+                        kb = bytesWritten / 1024
+                        if(kb < 1000):
+                            print('Written %s kilobytes.' % kb)
+                        else:
+                            threshold = int(1024000 / 4)
+                            print('Written %s megabytes.' % (kb / 1000))
+
 
     def encryptBlock(self, block):
-        print('Original Block:')
-        print(block)
+        #print('Original Block:')
+        #print(block)
         roundNum = 0
         block = self.addRoundKey(block, roundNum)
         roundNum += 1
@@ -195,8 +259,8 @@ class AES():
                 block = self.mixColumns(block)
             block = self.addRoundKey(block, roundNum)
             roundNum += 1
-        print('Encrypted Block:')
-        print(block)
+        #print('Encrypted Block:')
+        #print(block)
         blockSize = AES.Block.NUM_COLS * AES.Block.NUM_ROWS
         total = 0
         for i in range(blockSize):
@@ -341,10 +405,6 @@ class AES():
                 actualSize = 0
                 for i in range(len(data)):
                     actualSize += len(data[i])
-                if(actualSize != expectedSize):
-                    print('Expected Length: %d' % expectedLength)
-                    print('Actual Length: %d' % actualLength)
-                    sys.exit('Input array is not the correct size.')
                 self.state = data
             else:
                 self.state = []
@@ -441,7 +501,6 @@ class AES():
                     index += AES.Block.NUM_COLS
                 offset += 1
             return AES.Block(data)
-
 
         @staticmethod
         def xorWords(word1, word2):
