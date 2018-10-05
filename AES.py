@@ -1,5 +1,6 @@
 from concurrent.futures.thread import ThreadPoolExecutor
 import threading
+import argparse
 import math
 import sys
 import os
@@ -226,7 +227,7 @@ class AES():
                 percent = ((totalBlocks - len(self.threadQueue)) / totalBlocks) * 100
                 if(math.floor(percent) > prevPercent):
                     prevPercent = math.floor(percent)
-                    print('Compiled %d%% \of data.' % percent)
+                    print('Compiled %d%% of data.' % percent)
             while padding > 0:
                 bytestring = self.threadQueue.pop(0).result()
                 paddedBytes = bytestring[len(bytestring) - 1]
@@ -234,6 +235,7 @@ class AES():
                     output.append(bytestring[i])
                 padding -= 1
             f.write(output)
+            print('Data written successfully!')
 
 
     def encryptBlock(self, block):
@@ -705,3 +707,22 @@ class AES():
                 str += char
             str += '\n'
             return str
+
+
+def main(inputfile, outputfile, keyFile, keyLength, mode):
+    if(mode == 'encrypt'):
+        instance = AES(inputfile, outputfile, keyFile, keyLength)
+        instance.encrypt()
+    elif(mode == 'decrypt'):
+        instance = AES(outputfile, inputfile, keyFile, keyLength)
+        instance.decrypt()
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Encrypt or decrypt files.')
+    parser.add_argument('--keysize', dest='keysize', type=int)
+    parser.add_argument('--keyfile', dest='keyfile')
+    parser.add_argument('--inputfile', dest='inputfile')
+    parser.add_argument('--outputfile', dest='outputfile')
+    parser.add_argument('--mode', dest='mode')
+    args = parser.parse_args()
+    main(args.inputfile, args.outputfile, args.keyfile, args.keysize, args.mode)
