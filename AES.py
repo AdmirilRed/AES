@@ -169,6 +169,7 @@ class AES():
                 numBlocks = math.floor(fileSize / blockSize)
                 f.seek(0, 0)
                 byteArray = bytearray(f.read(fileSize))
+                prevPercent = -1
                 arrayIndex = 0
                 for i in range(numBlocks):
                     data = []
@@ -186,6 +187,10 @@ class AES():
                     thread = executor.submit(self.encryptBlock, block)
                     self.threadQueue.append(thread)
                     self.threadSemaphore.release()
+                    percent = (len(self.threadQueue) / numBlocks) * 100
+                    if(math.floor(percent) > prevPercent):
+                        prevPercent = math.floor(percent)
+                        print('Encrypted %d%% of data.' % percent)
                 data = []
                 index = arrayIndex
                 paddedBytes = fileSize - index
@@ -210,30 +215,25 @@ class AES():
                 self.writeBlocks(fileSize, self.cyphertextFile, 0)
 
     def writeBlocks(self, fileSize, filename, padding):
-        bytesWritten = 0
-        threshold = 2048
         with open(filename, 'wb') as f:
             output = bytearray()
+            totalBlocks = len(self.threadQueue)
+            prevPercent = -1
             while len(self.threadQueue) > 0 + padding:
                 bytestring = self.threadQueue.pop(0).result()
                 for i in range(len(bytestring)):
                     output.append(bytestring[i])
+                percent = ((totalBlocks - len(self.threadQueue)) / totalBlocks) * 100
+                if(math.floor(percent) > prevPercent):
+                    prevPercent = math.floor(percent)
+                    print('Compiled %d%% \of data.' % percent)
             while padding > 0:
                 bytestring = self.threadQueue.pop(0).result()
                 paddedBytes = bytestring[len(bytestring) - 1]
                 for i in range(len(bytestring) - paddedBytes):
                     output.append(bytestring[i])
-                    print('Appending!')
                 padding -= 1
             f.write(output)
-            bytesWritten += len(output)
-            if(bytesWritten % threshold == 0):
-                    kb = bytesWritten / 1024
-                    if(kb < 1000):
-                        print('Written %s kilobytes.' % kb)
-                    else:
-                        threshold = int(1024000 / 4)
-                        print('Written %s megabytes.' % (kb / 1000))
 
 
     def encryptBlock(self, block):
@@ -384,6 +384,7 @@ class AES():
                 numBlocks = math.floor(fileSize / blockSize)
                 f.seek(0, 0)
                 byteArray = bytearray(f.read(fileSize))
+                prevPercent = -1
                 arrayIndex = 0
                 for i in range(numBlocks):
                     data = []
@@ -401,6 +402,10 @@ class AES():
                     thread = executor.submit(self.decryptBlock, block)
                     self.threadQueue.append(thread)
                     self.threadSemaphore.release()
+                    percent = len(self.threadQueue) / numBlocks * 100
+                    if(math.floor(percent) > prevPercent):
+                        prevPercent = math.floor(percent)
+                        print('Decrypted %d%% of data.' % percent)
                 self.writeBlocks(fileSize, self.plaintextFile, 1)
 
     @staticmethod
@@ -700,30 +705,3 @@ class AES():
                 str += char
             str += '\n'
             return str
-
-
-def main():
-
-    testInput = [0x00, 0x11, 0x22, 0x33,
-                 0x44, 0x55, 0x66, 0x77,
-                 0x88, 0x99, 0xaa, 0xbb,
-                 0xcc, 0xdd, 0xee, 0xff]
-
-    testKey = [0x00, 0x01, 0x02, 0x03,
-               0x04, 0x05, 0x06, 0x07,
-               0x08, 0x09, 0x0a, 0x0b,
-               0x0c, 0x0d, 0x0e, 0x0f]
-
-    plainFile = 'inputfile'
-    cypherFile = 'outputfile'
-    keyFile = 'keyfile'
-    keySize = 128
-    instance = AES(plainFile, cypherFile, keyFile, keySize)
-    print(instance)
-    print(instance.key)
-    instance.encrypt()
-    print('***********************')
-    instance.decrypt()
-
-if __name__ == '__main__':
-    main()
