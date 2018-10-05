@@ -145,8 +145,6 @@ class AES():
               0x37, 0x39, 0x2b, 0x25, 0x0f, 0x01, 0x13, 0x1d, 0x47, 0x49, 0x5b, 0x55, 0x7f, 0x71, 0x63, 0x6d,
               0xd7, 0xd9, 0xcb, 0xc5, 0xef, 0xe1, 0xf3, 0xfd, 0xa7, 0xa9, 0xbb, 0xb5, 0x9f, 0x91, 0x83, 0x8d]
 
-    MEMORY_THRESHOLD = 1000000000
-
     def __init__(self, plaintextFile, cyphertextFile,
                  keyFile, keyLength):
         self.plaintextFile = plaintextFile
@@ -155,7 +153,6 @@ class AES():
         self.key = AES.Key(keyFile, keyLength)
         self.threadSemaphore = threading.Semaphore(0)
         self.threadQueue = []
-        self.doneQueueing = 0
 
     def __str__(self):
         result = 'Plaintext: \"%s\" ' % self.plaintextFile
@@ -171,51 +168,16 @@ class AES():
                 blockSize = AES.Block.NUM_ROWS * AES.Block.NUM_COLS
                 numBlocks = math.floor(fileSize / blockSize)
                 f.seek(0, 0)
-                if(fileSize > AES.MEMORY_THRESHOLD):
-                    executor.submit(self.writeBlocks, fileSize, self.cyphertextFile)
-                    for i in range(numBlocks):
-                        block = AES.Block.fromFile(f, 0)
-                        thread = executor.submit(self.encryptBlock, block)
-                        self.threadQueue.append(thread)
-                        self.threadSemaphore.release()
-                    block = AES.Block.fromFile(f, 1)
-                    thread = executor.submit(self.encryptBlock, block)
-                    self.threadQueue.append(thread)
-                    self.doneQueueing = 1
-                    self.threadSemaphore.release()
-                    return
-                else:
-                    byteArray = bytearray(f.read(fileSize))
-                    arrayIndex = 0
-                    for i in range(numBlocks):
-                        data = []
-                        index = arrayIndex
-                        for r in range(AES.Block.NUM_ROWS):
-                            data.append([])
-                            offset = 0
-                            for c in range(AES.Block.NUM_COLS):
-                                byte = byteArray[index + offset]
-                                data[r].append(byte)
-                                offset += AES.Block.NUM_COLS
-                            index += 1
-                        arrayIndex += blockSize
-                        block = AES.Block(data)
-                        thread = executor.submit(self.encryptBlock, block)
-                        self.threadQueue.append(thread)
-                        self.threadSemaphore.release()
+                byteArray = bytearray(f.read(fileSize))
+                arrayIndex = 0
+                for i in range(numBlocks):
                     data = []
                     index = arrayIndex
-                    paddedBytes = fileSize - index
-                    if(paddedBytes == 0):
-                        paddedBytes = blockSize
                     for r in range(AES.Block.NUM_ROWS):
                         data.append([])
                         offset = 0
                         for c in range(AES.Block.NUM_COLS):
-                            if(index + offset >= fileSize):
-                                byte = paddedBytes
-                            else:
-                                byte = byteArray[index + offset]
+                            byte = byteArray[index + offset]
                             data[r].append(byte)
                             offset += AES.Block.NUM_COLS
                         index += 1
@@ -223,49 +185,58 @@ class AES():
                     block = AES.Block(data)
                     thread = executor.submit(self.encryptBlock, block)
                     self.threadQueue.append(thread)
-                    self.doneQueueing = 1
                     self.threadSemaphore.release()
-                    self.writeBlocks(fileSize, self.cyphertextFile)
+                data = []
+                index = arrayIndex
+                paddedBytes = fileSize - index
+                if(paddedBytes == 0):
+                    paddedBytes = blockSize
+                for r in range(AES.Block.NUM_ROWS):
+                    data.append([])
+                    offset = 0
+                    for c in range(AES.Block.NUM_COLS):
+                        if(index + offset >= fileSize):
+                            byte = paddedBytes
+                        else:
+                            byte = byteArray[index + offset]
+                        data[r].append(byte)
+                        offset += AES.Block.NUM_COLS
+                    index += 1
+                arrayIndex += blockSize
+                block = AES.Block(data)
+                thread = executor.submit(self.encryptBlock, block)
+                self.threadQueue.append(thread)
+                self.threadSemaphore.release()
+                self.writeBlocks(fileSize, self.cyphertextFile, 0)
 
-
-    def writeBlocks(self, fileSize, filename):
+    def writeBlocks(self, fileSize, filename, padding):
         bytesWritten = 0
         threshold = 2048
         with open(filename, 'wb') as f:
-            if(fileSize > AES.MEMORY_THRESHOLD):
-                while self.doneQueueing == 0 or len(self.threadQueue) != 0:
-                    self.threadSemaphore.acquire()
-                    thread = self.threadQueue.pop(0)
-                    bytestring = bytearray(thread.result())
-                    f.write(bytestring)
-                    bytesWritten += len(bytestring)
-                    if(bytesWritten % threshold == 0):
-                        kb = bytesWritten / 1024
-                        if(kb < 1000):
-                            print('Written %s kilobytes.' % kb)
-                        else:
-                            threshold = int(1024000 / 4)
-                            print('Written %s megabytes.' % (kb / 1000))
-            else:
-                output = bytearray()
-                while len(self.threadQueue) > 0:
-                    bytestring = self.threadQueue.pop(0).result()
-                    for i in range(len(bytestring)):
-                        output.append(bytestring[i])
-                f.write(output)
-                bytesWritten += len(output)
-                if(bytesWritten % threshold == 0):
-                        kb = bytesWritten / 1024
-                        if(kb < 1000):
-                            print('Written %s kilobytes.' % kb)
-                        else:
-                            threshold = int(1024000 / 4)
-                            print('Written %s megabytes.' % (kb / 1000))
+            output = bytearray()
+            while len(self.threadQueue) > 0 + padding:
+                bytestring = self.threadQueue.pop(0).result()
+                for i in range(len(bytestring)):
+                    output.append(bytestring[i])
+            while padding > 0:
+                bytestring = self.threadQueue.pop(0).result()
+                paddedBytes = bytestring[len(bytestring) - 1]
+                for i in range(len(bytestring) - paddedBytes):
+                    output.append(bytestring[i])
+                    print('Appending!')
+                padding -= 1
+            f.write(output)
+            bytesWritten += len(output)
+            if(bytesWritten % threshold == 0):
+                    kb = bytesWritten / 1024
+                    if(kb < 1000):
+                        print('Written %s kilobytes.' % kb)
+                    else:
+                        threshold = int(1024000 / 4)
+                        print('Written %s megabytes.' % (kb / 1000))
 
 
     def encryptBlock(self, block):
-        #print('Original Block:')
-        #print(block)
         roundNum = 0
         block = self.addRoundKey(block, roundNum)
         roundNum += 1
@@ -276,14 +247,31 @@ class AES():
                 block = self.mixColumns(block)
             block = self.addRoundKey(block, roundNum)
             roundNum += 1
-        #print('Encrypted Block:')
-        #print(block)
         blockSize = AES.Block.NUM_COLS * AES.Block.NUM_ROWS
         total = 0
         for i in range(blockSize):
             total += block.getNext() << (8 * i)
         result = total.to_bytes(blockSize, byteorder='little')
         return result
+
+    def decryptBlock(self, block):
+        roundNum = self.key.numRounds
+        block = self.addRoundKey(block, roundNum)
+        roundNum -= 1
+        while roundNum >= 0:
+            block = self.invShiftRows(block)
+            block = self.invSubBytes(block)
+            block = self.addRoundKey(block, roundNum)
+            if(roundNum - 1 >= 0):
+                block = self.invMixColumns(block)
+            roundNum -= 1
+        blockSize = blockSize = AES.Block.NUM_COLS * AES.Block.NUM_ROWS
+        total = 0
+        for i in range(blockSize):
+            total += block.getNext() << (8 * i)
+        result = total.to_bytes(blockSize, byteorder='little')
+        return result
+
 
     def addRoundKey(self, block, roundNum):
         roundKey = self.key.rounds[roundNum]
@@ -301,10 +289,24 @@ class AES():
             block.setColumn(c, word)
         return block
 
+    def invSubBytes(self, block):
+        for c in range(AES.Block.NUM_COLS):
+            word = block.getColumn(c)
+            AES.inverseSubstituteWord(word)
+            block.setColumn(c, word)
+        return block
+
     def shiftRows(self, block):
         for r in range(AES.Block.NUM_ROWS):
             row = block.getRow(r)
             row.rotate(r)
+            block.setRow(r, row)
+        return block
+
+    def invShiftRows(self, block):
+        for r in range(AES.Block.NUM_ROWS):
+            row = block.getRow(r)
+            row.rotate(-r)
             block.setRow(r, row)
         return block
 
@@ -340,8 +342,66 @@ class AES():
             result.state[3][c] = newValue
         return result
 
+    def invMixColumns(self, block):
+        result = AES.Block(None)
+        for c in range(AES.Block.NUM_COLS):
+            arg1 = AES.MUL_14[block.state[0][c]]
+            arg2 = AES.MUL_11[block.state[1][c]]
+            arg3 = AES.MUL_13[block.state[2][c]]
+            arg4 = AES.MUL_9[block.state[3][c]]
+            newValue = arg1 ^ arg2 ^ arg3 ^ arg4
+            result.state[0][c] = newValue
+        for c in range(AES.Block.NUM_COLS):
+            arg1 = AES.MUL_9[block.state[0][c]]
+            arg2 = AES.MUL_14[block.state[1][c]]
+            arg3 = AES.MUL_11[block.state[2][c]]
+            arg4 = AES.MUL_13[block.state[3][c]]
+            newValue = arg1 ^ arg2 ^ arg3 ^ arg4
+            result.state[1][c] = newValue
+        for c in range(AES.Block.NUM_COLS):
+            arg1 = AES.MUL_13[block.state[0][c]]
+            arg2 = AES.MUL_9[block.state[1][c]]
+            arg3 = AES.MUL_14[block.state[2][c]]
+            arg4 = AES.MUL_11[block.state[3][c]]
+            newValue = arg1 ^ arg2 ^ arg3 ^ arg4
+            result.state[2][c] = newValue
+        for c in range(AES.Block.NUM_COLS):
+            arg1 = AES.MUL_11[block.state[0][c]]
+            arg2 = AES.MUL_13[block.state[1][c]]
+            arg3 = AES.MUL_9[block.state[2][c]]
+            arg4 = AES.MUL_14[block.state[3][c]]
+            newValue = arg1 ^ arg2 ^ arg3 ^ arg4
+            result.state[3][c] = newValue
+        return result
+        
+
     def decrypt(self):
-        print()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            with open(self.cyphertextFile, 'rb') as f:
+                f.seek(0, 2)
+                fileSize = f.tell()
+                blockSize = AES.Block.NUM_ROWS * AES.Block.NUM_COLS
+                numBlocks = math.floor(fileSize / blockSize)
+                f.seek(0, 0)
+                byteArray = bytearray(f.read(fileSize))
+                arrayIndex = 0
+                for i in range(numBlocks):
+                    data = []
+                    index = arrayIndex
+                    for r in range(AES.Block.NUM_ROWS):
+                        data.append([])
+                        offset = 0
+                        for c in range(AES.Block.NUM_COLS):
+                            byte = byteArray[index + offset]
+                            data[r].append(byte)
+                            offset += AES.Block.NUM_COLS
+                        index += 1
+                    arrayIndex += blockSize
+                    block = AES.Block(data)
+                    thread = executor.submit(self.decryptBlock, block)
+                    self.threadQueue.append(thread)
+                    self.threadSemaphore.release()
+                self.writeBlocks(fileSize, self.plaintextFile, 1)
 
     @staticmethod
     def determineRounds(keyLength):
@@ -362,10 +422,21 @@ class AES():
         return AES.S_BOX[byte]
 
     @staticmethod
+    def inverseSubstituteByte(byte):
+        return AES.INV_S_BOX[byte]
+
+    @staticmethod
     def substituteWord(word):
         for i in range(AES.Block.NUM_ROWS):
             byte = word.data[i]
             word.data[i] = AES.substituteByte(byte)
+        return word
+
+    @staticmethod
+    def inverseSubstituteWord(word):
+        for i in range(AES.Block.NUM_ROWS):
+            byte = word.data[i]
+            word.data[i] = AES.inverseSubstituteByte(byte)
         return word
 
     @staticmethod
@@ -539,9 +610,14 @@ class AES():
                 return result
 
             def rotate(self, n):
-                for i in range(n):
-                    temp = self.data.pop(0)
-                    self.data.append(temp)
+                if(n >= 0):
+                    for i in range(n):
+                        temp = self.data.pop(0)
+                        self.data.append(temp)
+                else:
+                    for i in range(-n):
+                        temp = self.data.pop()
+                        self.data.insert(0, temp)
 
         class Row():
 
@@ -557,9 +633,15 @@ class AES():
                 return result
 
             def rotate(self, n):
-                for i in range(n):
-                    temp = self.data.pop(0)
-                    self.data.append(temp)
+                if(n >= 0):
+                    for i in range(n):
+                        temp = self.data.pop(0)
+                        self.data.append(temp)
+                else:
+                    for i in range(-n):
+                        temp = self.data.pop()
+                        self.data.insert(0, temp)
+                    
 
     class Key():
 
@@ -621,14 +703,27 @@ class AES():
 
 
 def main():
+
+    testInput = [0x00, 0x11, 0x22, 0x33,
+                 0x44, 0x55, 0x66, 0x77,
+                 0x88, 0x99, 0xaa, 0xbb,
+                 0xcc, 0xdd, 0xee, 0xff]
+
+    testKey = [0x00, 0x01, 0x02, 0x03,
+               0x04, 0x05, 0x06, 0x07,
+               0x08, 0x09, 0x0a, 0x0b,
+               0x0c, 0x0d, 0x0e, 0x0f]
+
     plainFile = 'inputfile'
     cypherFile = 'outputfile'
     keyFile = 'keyfile'
-    keySize = 256
+    keySize = 128
     instance = AES(plainFile, cypherFile, keyFile, keySize)
     print(instance)
     print(instance.key)
     instance.encrypt()
+    print('***********************')
+    instance.decrypt()
 
 if __name__ == '__main__':
-    #main()
+    main()
