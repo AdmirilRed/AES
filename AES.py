@@ -164,6 +164,8 @@ class AES():
               0x37, 0x39, 0x2b, 0x25, 0x0f, 0x01, 0x13, 0x1d, 0x47, 0x49, 0x5b, 0x55, 0x7f, 0x71, 0x63, 0x6d,
               0xd7, 0xd9, 0xcb, 0xc5, 0xef, 0xe1, 0xf3, 0xfd, 0xa7, 0xa9, 0xbb, 0xb5, 0x9f, 0x91, 0x83, 0x8d]
 
+    # Creates an instance of the AES class
+
     def __init__(self, plaintextFile, cyphertextFile,
                  keyFile, keyLength):
         self.plaintextFile = plaintextFile
@@ -173,16 +175,21 @@ class AES():
         self.threadSemaphore = threading.Semaphore(0)
         self.threadQueue = []
 
+    # Utility method to create a String representation of an AES instance
+
     def __str__(self):
         result = 'Plaintext: \"%s\" ' % self.plaintextFile
         result += 'Cyphertext: \"%s\" ' % self.cyphertextFile
         result += 'Key: \"%s\"' % self.keyFile
         return result
 
-    def encrypt(self):  # INCREASE NUMBER OF WORKERS WHEN DONE DEBUGGING!!!!
+    # Encrypts the plaintextFile and writes to the cyphertextFile
+
+    def encrypt(self):
         with ThreadPoolExecutor(max_workers=1) as executor:
             with open(self.plaintextFile, 'rb') as f:
                 f.seek(0, 2)
+                # Gets the size of the file in bytes
                 fileSize = f.tell()
                 blockSize = AES.Block.NUM_ROWS * AES.Block.NUM_COLS
                 numBlocks = math.floor(fileSize / blockSize)
@@ -190,6 +197,7 @@ class AES():
                 byteArray = bytearray(f.read(fileSize))
                 prevPercent = -1
                 arrayIndex = 0
+                # Encrypts all but the last Block
                 for i in range(numBlocks):
                     data = []
                     index = arrayIndex
@@ -203,13 +211,16 @@ class AES():
                         index += 1
                     arrayIndex += blockSize
                     block = AES.Block(data)
+                    # Submits a Block to be encrypted by a new thread
                     thread = executor.submit(self.encryptBlock, block)
                     self.threadQueue.append(thread)
+                    # Wakes the writeBlocks() thread
                     self.threadSemaphore.release()
                     percent = (len(self.threadQueue) / numBlocks) * 100
                     if(math.floor(percent) > prevPercent):
                         prevPercent = math.floor(percent)
                         print('Encrypted %d%% of data.' % percent)
+                # Encrypt the final Block and include padding
                 data = []
                 index = arrayIndex
                 paddedBytes = blockSize - (fileSize - index)
@@ -231,168 +242,10 @@ class AES():
                 thread = executor.submit(self.encryptBlock, block)
                 self.threadQueue.append(thread)
                 self.threadSemaphore.release()
+                # Write the Blocks to the file
                 self.writeBlocks(fileSize, self.cyphertextFile, 0)
 
-    def writeBlocks(self, fileSize, filename, padding):
-        with open(filename, 'wb') as f:
-            output = bytearray()
-            totalBlocks = len(self.threadQueue)
-            prevPercent = -1
-            while len(self.threadQueue) > 0 + padding:
-                bytestring = self.threadQueue.pop(0).result()
-                for i in range(len(bytestring)):
-                    output.append(bytestring[i])
-                percent = totalBlocks - len(self.threadQueue)
-                percent /= totalBlocks
-                percent *= 100
-                if(math.floor(percent) > prevPercent):
-                    prevPercent = math.floor(percent)
-                    print('Compiled %d%% of data.' % percent)
-            while padding > 0:
-                bytestring = self.threadQueue.pop(0).result()
-                paddedBytes = bytestring[len(bytestring) - 1]
-                for i in range(len(bytestring) - paddedBytes):
-                    output.append(bytestring[i])
-                padding -= 1
-            f.write(output)
-            print('Data written successfully!')
-
-    def encryptBlock(self, block):
-        roundNum = 0
-        block = self.addRoundKey(block, roundNum)
-        roundNum += 1
-        while roundNum <= self.key.numRounds:
-            block = self.subBytes(block)
-            block = self.shiftRows(block)
-            if(roundNum + 1 <= self.key.numRounds):
-                block = self.mixColumns(block)
-            block = self.addRoundKey(block, roundNum)
-            roundNum += 1
-        blockSize = AES.Block.NUM_COLS * AES.Block.NUM_ROWS
-        total = 0
-        for i in range(blockSize):
-            total += block.getNext() << (8 * i)
-        result = total.to_bytes(blockSize, byteorder='little')
-        return result
-
-    def decryptBlock(self, block):
-        roundNum = self.key.numRounds
-        block = self.addRoundKey(block, roundNum)
-        roundNum -= 1
-        while roundNum >= 0:
-            block = self.invShiftRows(block)
-            block = self.invSubBytes(block)
-            block = self.addRoundKey(block, roundNum)
-            if(roundNum - 1 >= 0):
-                block = self.invMixColumns(block)
-            roundNum -= 1
-        blockSize = blockSize = AES.Block.NUM_COLS * AES.Block.NUM_ROWS
-        total = 0
-        for i in range(blockSize):
-            total += block.getNext() << (8 * i)
-        result = total.to_bytes(blockSize, byteorder='little')
-        return result
-
-    def addRoundKey(self, block, roundNum):
-        roundKey = self.key.rounds[roundNum]
-        for c in range(AES.Block.NUM_COLS):
-            keyWord = roundKey.getColumn(c)
-            blockWord = block.getColumn(c)
-            AES.Block.xorWords(blockWord, keyWord)
-            block.setColumn(c, blockWord)
-        return block
-
-    def subBytes(self, block):
-        for c in range(AES.Block.NUM_COLS):
-            word = block.getColumn(c)
-            AES.substituteWord(word)
-            block.setColumn(c, word)
-        return block
-
-    def invSubBytes(self, block):
-        for c in range(AES.Block.NUM_COLS):
-            word = block.getColumn(c)
-            AES.inverseSubstituteWord(word)
-            block.setColumn(c, word)
-        return block
-
-    def shiftRows(self, block):
-        for r in range(AES.Block.NUM_ROWS):
-            row = block.getRow(r)
-            row.rotate(r)
-            block.setRow(r, row)
-        return block
-
-    def invShiftRows(self, block):
-        for r in range(AES.Block.NUM_ROWS):
-            row = block.getRow(r)
-            row.rotate(-r)
-            block.setRow(r, row)
-        return block
-
-    def mixColumns(self, block):
-        result = AES.Block(None)
-        for c in range(AES.Block.NUM_COLS):
-            arg1 = AES.MUL_2[block.state[0][c]]
-            arg2 = AES.MUL_3[block.state[1][c]]
-            arg3 = block.state[2][c]
-            arg4 = block.state[3][c]
-            newValue = arg1 ^ arg2 ^ arg3 ^ arg4
-            result.state[0][c] = newValue
-        for c in range(AES.Block.NUM_COLS):
-            arg1 = block.state[0][c]
-            arg2 = AES.MUL_2[block.state[1][c]]
-            arg3 = AES.MUL_3[block.state[2][c]]
-            arg4 = block.state[3][c]
-            newValue = arg1 ^ arg2 ^ arg3 ^ arg4
-            result.state[1][c] = newValue
-        for c in range(AES.Block.NUM_COLS):
-            arg1 = block.state[0][c]
-            arg2 = block.state[1][c]
-            arg3 = AES.MUL_2[block.state[2][c]]
-            arg4 = AES.MUL_3[block.state[3][c]]
-            newValue = arg1 ^ arg2 ^ arg3 ^ arg4
-            result.state[2][c] = newValue
-        for c in range(AES.Block.NUM_COLS):
-            arg1 = AES.MUL_3[block.state[0][c]]
-            arg2 = block.state[1][c]
-            arg3 = block.state[2][c]
-            arg4 = AES.MUL_2[block.state[3][c]]
-            newValue = arg1 ^ arg2 ^ arg3 ^ arg4
-            result.state[3][c] = newValue
-        return result
-
-    def invMixColumns(self, block):
-        result = AES.Block(None)
-        for c in range(AES.Block.NUM_COLS):
-            arg1 = AES.MUL_14[block.state[0][c]]
-            arg2 = AES.MUL_11[block.state[1][c]]
-            arg3 = AES.MUL_13[block.state[2][c]]
-            arg4 = AES.MUL_9[block.state[3][c]]
-            newValue = arg1 ^ arg2 ^ arg3 ^ arg4
-            result.state[0][c] = newValue
-        for c in range(AES.Block.NUM_COLS):
-            arg1 = AES.MUL_9[block.state[0][c]]
-            arg2 = AES.MUL_14[block.state[1][c]]
-            arg3 = AES.MUL_11[block.state[2][c]]
-            arg4 = AES.MUL_13[block.state[3][c]]
-            newValue = arg1 ^ arg2 ^ arg3 ^ arg4
-            result.state[1][c] = newValue
-        for c in range(AES.Block.NUM_COLS):
-            arg1 = AES.MUL_13[block.state[0][c]]
-            arg2 = AES.MUL_9[block.state[1][c]]
-            arg3 = AES.MUL_14[block.state[2][c]]
-            arg4 = AES.MUL_11[block.state[3][c]]
-            newValue = arg1 ^ arg2 ^ arg3 ^ arg4
-            result.state[2][c] = newValue
-        for c in range(AES.Block.NUM_COLS):
-            arg1 = AES.MUL_11[block.state[0][c]]
-            arg2 = AES.MUL_13[block.state[1][c]]
-            arg3 = AES.MUL_9[block.state[2][c]]
-            arg4 = AES.MUL_14[block.state[3][c]]
-            newValue = arg1 ^ arg2 ^ arg3 ^ arg4
-            result.state[3][c] = newValue
-        return result
+    # Decrypts the cyphertextFile and writes to the plaintextFile
 
     def decrypt(self):
         with ThreadPoolExecutor(max_workers=1) as executor:
@@ -427,6 +280,197 @@ class AES():
                         print('Decrypted %d%% of data.' % percent)
                 self.writeBlocks(fileSize, self.plaintextFile, 1)
 
+    # Writes Blocks to a specified file.  The padding parameter tells
+    # the method how many padded Blocks to expect in the queue.
+
+    def writeBlocks(self, fileSize, filename, padding):
+        with open(filename, 'wb') as f:
+            output = bytearray()
+            totalBlocks = len(self.threadQueue)
+            prevPercent = -1
+            while len(self.threadQueue) > 0 + padding:
+                bytestring = self.threadQueue.pop(0).result()
+                for i in range(len(bytestring)):
+                    output.append(bytestring[i])
+                percent = totalBlocks - len(self.threadQueue)
+                percent /= totalBlocks
+                percent *= 100
+                if(math.floor(percent) > prevPercent):
+                    prevPercent = math.floor(percent)
+                    print('Compiled %d%% of data.' % percent)
+            while padding > 0:
+                bytestring = self.threadQueue.pop(0).result()
+                paddedBytes = bytestring[len(bytestring) - 1]
+                # Write only the non-padded bytes
+                for i in range(len(bytestring) - paddedBytes):
+                    output.append(bytestring[i])
+                padding -= 1
+            f.write(output)
+            print('Data written successfully!')
+
+    # Encrypts a single Block and returns a bytestring representing
+    # the encrypted bytes it contains.
+
+    def encryptBlock(self, block):
+        roundNum = 0
+        block = self.addRoundKey(block, roundNum)
+        roundNum += 1
+        while roundNum <= self.key.numRounds:
+            block = self.subBytes(block)
+            block = self.shiftRows(block)
+            if(roundNum + 1 <= self.key.numRounds):
+                block = self.mixColumns(block)
+            block = self.addRoundKey(block, roundNum)
+            roundNum += 1
+        blockSize = AES.Block.NUM_COLS * AES.Block.NUM_ROWS
+        total = 0
+        for i in range(blockSize):
+            total += block.getNext() << (8 * i)
+        result = total.to_bytes(blockSize, byteorder='little')
+        return result
+
+    # Decrypts a single Block and returns a bytestring representing
+    # the decrypted bytes it contains.
+
+    def decryptBlock(self, block):
+        roundNum = self.key.numRounds
+        block = self.addRoundKey(block, roundNum)
+        roundNum -= 1
+        while roundNum >= 0:
+            block = self.invShiftRows(block)
+            block = self.invSubBytes(block)
+            block = self.addRoundKey(block, roundNum)
+            if(roundNum - 1 >= 0):
+                block = self.invMixColumns(block)
+            roundNum -= 1
+        blockSize = blockSize = AES.Block.NUM_COLS * AES.Block.NUM_ROWS
+        total = 0
+        for i in range(blockSize):
+            total += block.getNext() << (8 * i)
+        result = total.to_bytes(blockSize, byteorder='little')
+        return result
+
+    # XORs a given Block with the specified round key
+
+    def addRoundKey(self, block, roundNum):
+        roundKey = self.key.rounds[roundNum]
+        for c in range(AES.Block.NUM_COLS):
+            keyWord = roundKey.getColumn(c)
+            blockWord = block.getColumn(c)
+            AES.Block.xorWords(blockWord, keyWord)
+            block.setColumn(c, blockWord)
+        return block
+
+    # Substitutes all bytes in the Block with the value corresponding
+    # to the index in S_BOX
+
+    def subBytes(self, block):
+        for c in range(AES.Block.NUM_COLS):
+            word = block.getColumn(c)
+            AES.substituteWord(word)
+            block.setColumn(c, word)
+        return block
+
+    # Substitutes all bytes in the Block with the value corresponding
+    # to the index in INV_S_BOX
+
+    def invSubBytes(self, block):
+        for c in range(AES.Block.NUM_COLS):
+            word = block.getColumn(c)
+            AES.inverseSubstituteWord(word)
+            block.setColumn(c, word)
+        return block
+
+    # Shifts the rows of the Block to the left by the number of columns
+    # corresponding to the row index
+
+    def shiftRows(self, block):
+        for r in range(AES.Block.NUM_ROWS):
+            row = block.getRow(r)
+            row.rotate(r)
+            block.setRow(r, row)
+        return block
+
+    # Shifts the rows of the Block to the right by the number of columns
+    # corresponding to the row index
+
+    def invShiftRows(self, block):
+        for r in range(AES.Block.NUM_ROWS):
+            row = block.getRow(r)
+            row.rotate(-r)
+            block.setRow(r, row)
+        return block
+
+    # Perform specialized matrix multiplication to shuffle the columns
+
+    def mixColumns(self, block):
+        result = AES.Block(None)
+        for c in range(AES.Block.NUM_COLS):
+            arg1 = AES.MUL_2[block.state[0][c]]
+            arg2 = AES.MUL_3[block.state[1][c]]
+            arg3 = block.state[2][c]
+            arg4 = block.state[3][c]
+            newValue = arg1 ^ arg2 ^ arg3 ^ arg4
+            result.state[0][c] = newValue
+        for c in range(AES.Block.NUM_COLS):
+            arg1 = block.state[0][c]
+            arg2 = AES.MUL_2[block.state[1][c]]
+            arg3 = AES.MUL_3[block.state[2][c]]
+            arg4 = block.state[3][c]
+            newValue = arg1 ^ arg2 ^ arg3 ^ arg4
+            result.state[1][c] = newValue
+        for c in range(AES.Block.NUM_COLS):
+            arg1 = block.state[0][c]
+            arg2 = block.state[1][c]
+            arg3 = AES.MUL_2[block.state[2][c]]
+            arg4 = AES.MUL_3[block.state[3][c]]
+            newValue = arg1 ^ arg2 ^ arg3 ^ arg4
+            result.state[2][c] = newValue
+        for c in range(AES.Block.NUM_COLS):
+            arg1 = AES.MUL_3[block.state[0][c]]
+            arg2 = block.state[1][c]
+            arg3 = block.state[2][c]
+            arg4 = AES.MUL_2[block.state[3][c]]
+            newValue = arg1 ^ arg2 ^ arg3 ^ arg4
+            result.state[3][c] = newValue
+        return result
+
+    # Perform specialized matrix multiplication to unshuffle the columns
+
+    def invMixColumns(self, block):
+        result = AES.Block(None)
+        for c in range(AES.Block.NUM_COLS):
+            arg1 = AES.MUL_14[block.state[0][c]]
+            arg2 = AES.MUL_11[block.state[1][c]]
+            arg3 = AES.MUL_13[block.state[2][c]]
+            arg4 = AES.MUL_9[block.state[3][c]]
+            newValue = arg1 ^ arg2 ^ arg3 ^ arg4
+            result.state[0][c] = newValue
+        for c in range(AES.Block.NUM_COLS):
+            arg1 = AES.MUL_9[block.state[0][c]]
+            arg2 = AES.MUL_14[block.state[1][c]]
+            arg3 = AES.MUL_11[block.state[2][c]]
+            arg4 = AES.MUL_13[block.state[3][c]]
+            newValue = arg1 ^ arg2 ^ arg3 ^ arg4
+            result.state[1][c] = newValue
+        for c in range(AES.Block.NUM_COLS):
+            arg1 = AES.MUL_13[block.state[0][c]]
+            arg2 = AES.MUL_9[block.state[1][c]]
+            arg3 = AES.MUL_14[block.state[2][c]]
+            arg4 = AES.MUL_11[block.state[3][c]]
+            newValue = arg1 ^ arg2 ^ arg3 ^ arg4
+            result.state[2][c] = newValue
+        for c in range(AES.Block.NUM_COLS):
+            arg1 = AES.MUL_11[block.state[0][c]]
+            arg2 = AES.MUL_13[block.state[1][c]]
+            arg3 = AES.MUL_9[block.state[2][c]]
+            arg4 = AES.MUL_14[block.state[3][c]]
+            newValue = arg1 ^ arg2 ^ arg3 ^ arg4
+            result.state[3][c] = newValue
+        return result
+
+    # Returns the number of rounds for a given key size
+
     @staticmethod
     def determineRounds(keyLength):
         if(keyLength == 128):
@@ -437,17 +481,25 @@ class AES():
             sys.exit('Unsupported key length.')
         return rounds
 
+    # Utility function to format a byte for String output
+
     @staticmethod
     def formatByte(byte):
         return "0x%02X " % byte
+
+    # Substitutes a single byte using S_BOX
 
     @staticmethod
     def substituteByte(byte):
         return AES.S_BOX[byte]
 
+    # Substitutes a single byte using INV_S_BOX
+
     @staticmethod
     def inverseSubstituteByte(byte):
         return AES.INV_S_BOX[byte]
+
+    # Substitutes a single word using S_BOX
 
     @staticmethod
     def substituteWord(word):
@@ -456,6 +508,8 @@ class AES():
             word.data[i] = AES.substituteByte(byte)
         return word
 
+    # Substitutes a single byte using INV_S_BOX
+
     @staticmethod
     def inverseSubstituteWord(word):
         for i in range(AES.Block.NUM_ROWS):
@@ -463,60 +517,21 @@ class AES():
             word.data[i] = AES.inverseSubstituteByte(byte)
         return word
 
-    @staticmethod
-    def generateKeyfile(filename, values, keyLength):
-        with open(filename, 'wb') as f:
-            if(keyLength == 128):
-                numBytes = 16
-            elif(keyLength == 256):
-                numBytes = 32
-            else:
-                sys.exit('Unsupported keylength.')
-            if(values is not None):
-                index = 0
-                while index < len(values):
-                    val1 = values[index] << 8
-                    val2 = values[index + 1]
-                    key = (val1 + val2).to_bytes(2, byteorder='big')
-                    f.write(key)
-                    index += 2
-            else:
-                for i in range(numBytes):
-                    key = os.urandom(1)
-                    f.write(key)
-        return filename
-
-    @staticmethod
-    def generatePlainfile(filename, values):
-        with open(filename, 'wb') as f:
-            numBytes = 16
-            if(values is not None):
-                index = 0
-                while index < len(values):
-                    val1 = values[index] << 8
-                    val2 = values[index + 1]
-                    data = (val1 + val2).to_bytes(2, byteorder='big')
-                    f.write(data)
-                    index += 2
-            else:
-                for i in range(numBytes):
-                    data = os.urandom(1)
-                    f.write(data)
-        return filename
+    # The Block class abstracts a 4x4 matrix of bytes for use in
+    # Keys and states.
 
     class Block():
 
         NUM_ROWS = 4
         NUM_COLS = 4
 
+        # Create a block using the array, data, as its matrix.  If no
+        # array is provided, the constructor creates one filled with 0s
+
         def __init__(self, data):
             self.currentRow = 0
             self.currentCol = 0
             if(data is not None):
-                expectedSize = AES.Block.NUM_COLS * AES.Block.NUM_ROWS
-                actualSize = 0
-                for i in range(len(data)):
-                    actualSize += len(data[i])
                 self.state = data
             else:
                 self.state = []
@@ -524,6 +539,8 @@ class AES():
                     self.state.append([])
                     for c in range(AES.Block.NUM_COLS):
                         self.state[r].append(0x00)
+
+        # Utility method to create a String representation of a Block
 
         def __str__(self):
             result = ''
@@ -533,19 +550,32 @@ class AES():
                 result += '\n'
             return result
 
+        # Returns the Column object corresponding to the given index
+
         def getColumn(self, index):
             return AES.Block.Column(self.state, index)
+
+        # Replaces the Column at the given index with the provided
+        # Column or Row
 
         def setColumn(self, index, word):
             for r in range(AES.Block.NUM_ROWS):
                 self.state[r][index] = word.data[r]
 
+        # Returns the Row object corresponding to the given index
+
         def getRow(self, index):
             return AES.Block.Row(self.state, index)
+
+        # Replaces the Row at the given index with the provided
+        # Row or Column
 
         def setRow(self, index, row):
             for c in range(AES.Block.NUM_COLS):
                 self.state[index][c] = row.data[c]
+
+        # Returns the next byte from the Block, incrementing the index
+        # when it is called.  Acts like an iterator.
 
         def getNext(self):
             row = self.currentRow
@@ -566,6 +596,9 @@ class AES():
             self.currentCol = col
             return result
 
+        # Sets the next byte in the Block to the given value, incrementing
+        # the index when it is called.  Acts like an iterator.
+
         def setNext(self, value):
             row = self.currentRow
             col = self.currentCol
@@ -584,9 +617,15 @@ class AES():
             self.currentRow = row
             self.currentCol = col
 
+        # Resets the index used in getNext() and setNext() back to 0, 0
+
         def resetPointer(self):
             self.currentRow = 0
             self.currentCol = 0
+
+        # Returns a new Block built from the next 16 bytes of the
+        # given file - provided that the file has been opened.  If
+        # padded > 0, then the new Block will be padded in CMS form.
 
         @staticmethod
         def fromFile(openedFile, padded):
@@ -614,24 +653,36 @@ class AES():
                 offset += 1
             return AES.Block(data)
 
+        # Transforms word1 to be the result of word1 ^ word2
+
         @staticmethod
         def xorWords(word1, word2):
             for r in range(AES.Block.NUM_ROWS):
                 result = word1.data[r] ^ word2.data[r]
                 word1.data[r] = result
 
+        # The Column class abstracts a column in a Block into an easily
+        # modified object. Sometimes referred to as a word.
+
         class Column():
+
+            # Creates a Column from the given Block at the provided index
 
             def __init__(self, state, index):
                 self.data = []
                 for r in range(AES.Block.NUM_ROWS):
                     self.data.append(state[r][index])
 
+            # Utility method to create a String representation of a Column
+
             def __str__(self):
                 result = ''
                 for r in range(AES.Block.NUM_ROWS):
                     result += '0x%02X\n' % self.data[r]
                 return result
+
+            # Shifts the values in the Column upwards by the given amount,
+            # or downwards if negative
 
             def rotate(self, n):
                 if(n >= 0):
@@ -645,16 +696,23 @@ class AES():
 
         class Row():
 
+            # Creates a Row from the given Block at the provided index
+
             def __init__(self, state, index):
                 self.data = []
                 for c in range(AES.Block.NUM_COLS):
                     self.data.append(state[index][c])
+
+            # Utility method to create a String representation of a Row
 
             def __str__(self):
                 result = ''
                 for c in range(AES.Block.NUM_COLS):
                     result += AES.formatByte(self.data[c])
                 return result
+
+            # Shifts the values in the Row left by the given amount,
+            # or right if negative
 
             def rotate(self, n):
                 if(n >= 0):
@@ -666,7 +724,12 @@ class AES():
                         temp = self.data.pop()
                         self.data.insert(0, temp)
 
+    # The Key class abstracts the key expansion process as well as the
+    # round keys.  Heavily relies on Blocks.
+
     class Key():
+
+        # Creates a Key object and performs the key expansion routine.
 
         def __init__(self, keyFile, keyLength):
             self.numRounds = AES.determineRounds(keyLength)
@@ -688,6 +751,7 @@ class AES():
                     currentWord = previousWord
                     if(wordNum % nk == 0):
                         currentWord.rotate(1)
+                    # Extra subBytes for 256-bit keys
                     if(wordNum % AES.Block.NUM_COLS == 0):
                         AES.substituteWord(currentWord)
                     if(wordNum % nk == 0):
@@ -700,6 +764,8 @@ class AES():
                     self.rounds[roundIndex].setColumn(columnIndex, currentWord)
                     previousWord = currentWord
                     wordNum += 1
+
+        # Utility method to create a String representation of a Key
 
         def __str__(self):
             result = ''
@@ -716,6 +782,9 @@ class AES():
             result = AES.Key.concatRowDelimiter(result, '=')
             return result
 
+        # Helper method used in __str__ to shorten code needed to
+        # concatenate line-breaks to the output String
+
         @staticmethod
         def concatRowDelimiter(str, char):
             numCols = (AES.Block.NUM_COLS * 4) + AES.Block.NUM_COLS - 1
@@ -724,6 +793,7 @@ class AES():
             str += '\n'
             return str
 
+# Builds and invokes an AES instance when called from the CLI
 
 def main(inputfile, outputfile, keyFile, keyLength, mode):
     if(mode == 'encrypt'):
@@ -732,6 +802,8 @@ def main(inputfile, outputfile, keyFile, keyLength, mode):
     elif(mode == 'decrypt'):
         instance = AES(outputfile, inputfile, keyFile, keyLength)
         instance.decrypt()
+
+# Parses CLI arguments and passes them to main()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Encrypt or decrypt files.')
