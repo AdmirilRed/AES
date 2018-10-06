@@ -5,8 +5,16 @@ import math
 import sys
 import os
 
+# The AES class serves as an abstraction for the AES algorithm defined
+# by NIST.  Intended usage is to create an AES object through the
+# constructor and call the encrypt() and decrypt() methods, which
+# will write data to the files specified in the constructor.
+
 
 class AES():
+
+    # S_BOX is a lookup table to be used when performing the subBytes
+    # step during encryption only.
 
     S_BOX = [0x63, 0x7c, 0x77, 0x7b, 0xf2, 0x6b, 0x6f, 0xc5, 0x30, 0x01, 0x67, 0x2b, 0xfe, 0xd7, 0xab, 0x76,
              0xca, 0x82, 0xc9, 0x7d, 0xfa, 0x59, 0x47, 0xf0, 0xad, 0xd4, 0xa2, 0xaf, 0x9c, 0xa4, 0x72, 0xc0,
@@ -25,6 +33,9 @@ class AES():
              0xe1, 0xf8, 0x98, 0x11, 0x69, 0xd9, 0x8e, 0x94, 0x9b, 0x1e, 0x87, 0xe9, 0xce, 0x55, 0x28, 0xdf,
              0x8c, 0xa1, 0x89, 0x0d, 0xbf, 0xe6, 0x42, 0x68, 0x41, 0x99, 0x2d, 0x0f, 0xb0, 0x54, 0xbb, 0x16]
 
+    # INV_S_BOX is a lookup table to be used when performing the
+    # invSubBytes step during decryption only.
+
     INV_S_BOX = [0x52, 0x09, 0x6a, 0xd5, 0x30, 0x36, 0xa5, 0x38, 0xbf, 0x40, 0xa3, 0x9e, 0x81, 0xf3, 0xd7, 0xfb,
                  0x7c, 0xe3, 0x39, 0x82, 0x9b, 0x2f, 0xff, 0x87, 0x34, 0x8e, 0x43, 0x44, 0xc4, 0xde, 0xe9, 0xcb,
                  0x54, 0x7b, 0x94, 0x32, 0xa6, 0xc2, 0x23, 0x3d, 0xee, 0x4c, 0x95, 0x0b, 0x42, 0xfa, 0xc3, 0x4e,
@@ -42,7 +53,14 @@ class AES():
                  0xa0, 0xe0, 0x3b, 0x4d, 0xae, 0x2a, 0xf5, 0xb0, 0xc8, 0xeb, 0xbb, 0x3c, 0x83, 0x53, 0x99, 0x61,
                  0x17, 0x2b, 0x04, 0x7e, 0xba, 0x77, 0xd6, 0x26, 0xe1, 0x69, 0x14, 0x63, 0x55, 0x21, 0x0c, 0x7d]
 
+    # R_CON is a lookup table to be used during key expansion
+
     R_CON = [0x00, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36]
+
+    # The following arrays are lookup tables for the special form of
+    # multiplication used in mixColumns and invMixColumns. The number
+    # following MUL is the constant that is being multiplied, while the
+    # index is the second operand.
 
     MUL_2 = [0x00, 0x02, 0x04, 0x06, 0x08, 0x0a, 0x0c, 0x0e, 0x10, 0x12, 0x14, 0x16, 0x18, 0x1a, 0x1c, 0x1e,
              0x20, 0x22, 0x24, 0x26, 0x28, 0x2a, 0x2c, 0x2e, 0x30, 0x32, 0x34, 0x36, 0x38, 0x3a, 0x3c, 0x3e,
@@ -224,7 +242,9 @@ class AES():
                 bytestring = self.threadQueue.pop(0).result()
                 for i in range(len(bytestring)):
                     output.append(bytestring[i])
-                percent = ((totalBlocks - len(self.threadQueue)) / totalBlocks) * 100
+                percent = totalBlocks - len(self.threadQueue)
+                percent /= totalBlocks
+                percent *= 100
                 if(math.floor(percent) > prevPercent):
                     prevPercent = math.floor(percent)
                     print('Compiled %d%% of data.' % percent)
@@ -236,7 +256,6 @@ class AES():
                 padding -= 1
             f.write(output)
             print('Data written successfully!')
-
 
     def encryptBlock(self, block):
         roundNum = 0
@@ -273,7 +292,6 @@ class AES():
             total += block.getNext() << (8 * i)
         result = total.to_bytes(blockSize, byteorder='little')
         return result
-
 
     def addRoundKey(self, block, roundNum):
         roundKey = self.key.rounds[roundNum]
@@ -375,7 +393,6 @@ class AES():
             newValue = arg1 ^ arg2 ^ arg3 ^ arg4
             result.state[3][c] = newValue
         return result
-        
 
     def decrypt(self):
         with ThreadPoolExecutor(max_workers=1) as executor:
@@ -648,7 +665,6 @@ class AES():
                     for i in range(-n):
                         temp = self.data.pop()
                         self.data.insert(0, temp)
-                    
 
     class Key():
 
@@ -680,7 +696,7 @@ class AES():
                     trailingWord = self.rounds[roundIndex - mult].getColumn(
                         columnIndex)
                     for i in range(AES.Block.NUM_ROWS):
-                        currentWord.data[i] = currentWord.data[i] ^ trailingWord.data[i]
+                        currentWord.data[i] ^= trailingWord.data[i]
                     self.rounds[roundIndex].setColumn(columnIndex, currentWord)
                     previousWord = currentWord
                     wordNum += 1
@@ -725,4 +741,5 @@ if __name__ == '__main__':
     parser.add_argument('--outputfile', dest='outputfile')
     parser.add_argument('--mode', dest='mode')
     args = parser.parse_args()
-    main(args.inputfile, args.outputfile, args.keyfile, args.keysize, args.mode)
+    main(args.inputfile, args.outputfile,
+         args.keyfile, args.keysize, args.mode)
