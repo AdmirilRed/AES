@@ -194,7 +194,7 @@ class AES():
                         print('Encrypted %d%% of data.' % percent)
                 data = []
                 index = arrayIndex
-                paddedBytes = block - (fileSize - index)
+                paddedBytes = blockSize - (fileSize - index)
                 if(paddedBytes == 0):
                     paddedBytes = blockSize
                 for r in range(AES.Block.NUM_ROWS):
